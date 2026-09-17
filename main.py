@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI, OpenAIError
 
-from models import ChatRequest
+from models import ChatRequest, RegularChatRequest
 from weather import fail, get_context
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,16 @@ def sse(event: str, data: dict) -> str:
 
 async def stream_answer(client, model, message, context, api):
     """Own the upstream stream so cancellation also closes the connection."""
-    yield sse('context', context)
+    if context is not None:
+        yield sse('context', context)
     messages = [
-        {'role': 'developer', 'content': INSTRUCTIONS},
-        {'role': 'user', 'content': json.dumps({'question': message, 'context': context})},
+        {'role': 'developer', 'content': INSTRUCTIONS if context is not None else (
+            'You are a helpful assistant. Answer clearly and concisely. '
+            'You have no live weather, location, or web lookup tools in this conversation. '
+            'Acknowledge when current information is unavailable.'
+        )},
+        {'role': 'user', 'content': json.dumps({'question': message, 'context': context})
+         if context is not None else message},
     ]
     try:
         if api == 'responses':
@@ -113,8 +119,8 @@ ERRORS = {
 }
 
 
-@app.post('/chat', responses=ERRORS, response_class=StreamingResponse)
-async def chat(payload: ChatRequest, request: Request):
+@app.post('/chat/weather', responses=ERRORS, response_class=StreamingResponse)
+async def weather_chat(payload: ChatRequest, request: Request):
     """Responses API. Errors after streaming begins appear as SSE error events."""
     return await chat_response(payload, request, 'responses')
 
@@ -123,6 +129,23 @@ async def chat(payload: ChatRequest, request: Request):
 async def chat_completions(payload: ChatRequest, request: Request):
     """Chat Completions comparison using the same context and SSE format."""
     return await chat_response(payload, request, 'chat_completions')
+
+
+@app.post('/chat', response_class=StreamingResponse, responses={
+    200: {'description': 'SSE: delta, then done or error',
+          'content': {'text/event-stream': {'schema': {'type': 'string'}}}},
+    503: {'description': 'openai_not_configured'},
+})
+async def regular_chat(payload: RegularChatRequest, request: Request):
+    """Single-turn general chat using Responses, without weather lookup or history."""
+    client = request.app.state.openai
+    if client is None or not request.app.state.model:
+        raise fail(503, 'openai_not_configured', 'Set OPENAI_API_KEY and a valid OPENAI_MODEL in .env.')
+    return StreamingResponse(
+        stream_answer(client, request.app.state.model, payload.message, None, 'responses'),
+        media_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
 
 
 @app.get('/health')

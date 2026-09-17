@@ -31,12 +31,13 @@ OpenAI calls incur API charges; the local weather demo needs no weather API key.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /chat` | Stream an answer using the Responses API |
+| `POST /chat/weather` | Weather chat using the Responses API |
 | `POST /chat/completions` | Compare with Chat Completions |
+| `POST /chat` | General chat using Responses; only `message` required |
 | `GET /health` | Check that the server is running |
 
 ```bash
-curl -N http://127.0.0.1:8000/chat \
+curl -N http://127.0.0.1:8000/chat/weather \
   -H 'Content-Type: application/json' \
   -d '{"message":"What is the current day and weather?","city":"Auckland","country":"NZ"}'
 ```
@@ -48,9 +49,20 @@ Change the URL to `/chat/completions` to compare the same question.
 - `region` is optional. Omit it unless needed to distinguish cities; ambiguous
   matches return HTTP 409 with candidates. Don't leave Swagger's `"string"` example.
 
+For general questions without weather or location:
+
+```bash
+curl -N http://127.0.0.1:8000/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Explain SSE in simple terms."}'
+```
+
+`RegularChatRequest` accepts a nonblank `message` up to 4,000 characters.
+Each request is independent: no conversation history, live data, or weather lookup.
+
 ## Stream output
 
-Both endpoints return SSE events containing JSON:
+All chat endpoints return SSE events containing JSON. Regular chat omits `context`:
 
 | Event | Contents |
 | --- | --- |
@@ -63,7 +75,7 @@ Read `done.text` for the final answer, or append each `delta.text` for live outp
 Don't append both. Swagger displays raw events; `curl -N` shows them as they arrive.
 After streaming starts, errors appear as SSE events even with HTTP 200.
 
-This is a single-turn demo: every request fetches model-based current weather,
+This is a single-turn demo: the weather endpoints fetch model-based current weather,
 with no conversation history. Check the resolved location in `context`.
 
 ## Standalone examples and tests
